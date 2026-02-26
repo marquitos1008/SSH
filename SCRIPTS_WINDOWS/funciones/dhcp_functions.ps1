@@ -72,8 +72,25 @@ function Configurar-DHCP {
     $Gateway = Read-Host "Gateway (opcional, Enter vacío)"
     $Lease = Read-Host "Tiempo de concesión (segundos)"
 
+    # ================== DNS CORREGIDO ==================
+
+    # DNS primaria (si vacío = IP del servidor)
+    $DNS1 = Read-Host "DNS primaria (Enter = IP del servidor $IPInicio)"
+    if ([string]::IsNullOrWhiteSpace($DNS1)) {
+        $DNS1 = $IPInicio
+    } elseif (!(Validar-IP $DNS1)) {
+        Write-Host "DNS primaria inválida. Se usará IP del servidor."
+        $DNS1 = $IPInicio
+    }
+
     # DNS secundaria opcional
     $DNS2 = Read-Host "DNS secundaria (opcional, Enter vacío)"
+    if (![string]::IsNullOrWhiteSpace($DNS2)) {
+        if (!(Validar-IP $DNS2)) {
+            Write-Host "DNS secundaria inválida. No se aplicará."
+            $DNS2 = $null
+        }
+    }
 
     try {
         Write-Host "Configurando IP fija al servidor..."
@@ -94,15 +111,7 @@ function Configurar-DHCP {
             New-NetIPAddress -InterfaceAlias $Adaptador -IPAddress $IPInicio -PrefixLength $prefijo -ErrorAction Stop
         }
 
-        # Ajustar DNS: primaria + secundaria opcional
-        if (![string]::IsNullOrWhiteSpace($DNS2)) {
-            Set-DnsClientServerAddress -InterfaceAlias $Adaptador -ServerAddresses @($IPInicio,$DNS2)
-        } else {
-            Set-DnsClientServerAddress -InterfaceAlias $Adaptador -ServerAddresses $IPInicio
-        }
-
         Restart-Service DHCPServer -ErrorAction SilentlyContinue
-
         Set-DhcpServerv4Binding -InterfaceAlias $Adaptador -BindingState $true -ErrorAction SilentlyContinue
 
         # Eliminar scopes anteriores
@@ -120,12 +129,19 @@ function Configurar-DHCP {
         $ScopeCreado = Get-DhcpServerv4Scope | Where-Object { $_.Name -eq $ScopeName }
         $ScopeId = $ScopeCreado.ScopeId
 
-        # Opciones de Scope
-        Set-DhcpServerv4OptionValue -ScopeId $ScopeId -DnsServer $IPInicio -Force
-        if (![string]::IsNullOrWhiteSpace($DNS2)) { Set-DhcpServerv4OptionValue -ScopeId $ScopeId -DnsServer $DNS2 -Force }
+        # ================== OPCIONES DE SCOPE CORREGIDAS ==================
+
+        if ($DNS2) {
+            Set-DhcpServerv4OptionValue -ScopeId $ScopeId -DnsServer @($DNS1,$DNS2) -Force
+        } else {
+            Set-DhcpServerv4OptionValue -ScopeId $ScopeId -DnsServer $DNS1 -Force
+        }
 
         Set-DhcpServerv4OptionValue -ScopeId $ScopeId -DnsDomain "reprobados.com" -Force
-        if ($Gateway) { Set-DhcpServerv4OptionValue -ScopeId $ScopeId -Router $Gateway }
+
+        if ($Gateway) { 
+            Set-DhcpServerv4OptionValue -ScopeId $ScopeId -Router $Gateway 
+        }
 
         Set-DhcpServerv4Scope -ScopeId $ScopeId -LeaseDuration (New-TimeSpan -Seconds $Lease)
 
